@@ -288,7 +288,7 @@ struct Run: AsyncParsableCommand {
   var rootDiskOpts: String = ""
 
   #if arch(arm64)
-    @Flag(help: ArgumentHelp("Disables audio and entropy devices and switches to only Mac-specific input devices.", discussion: "Useful for running a VM that can be suspended via \"tart suspend\"."))
+    @Flag(help: ArgumentHelp("Disables audio and entropy devices; a macOS VM gets only Mac-specific input devices, and a Linux VM no keyboard or pointer.", discussion: "Useful for running a VM that can be suspended via \"tart suspend\"."))
   #endif
   var suspendable: Bool = false
 
@@ -392,12 +392,26 @@ struct Run: AsyncParsableCommand {
       suspendable = true
     }
 
+    // A Linux VM is suspendable too: Virtualization.framework saves its state as
+    // it does a macOS VM's (validateSaveRestoreSupport is asked at the suspend),
+    // given the machine identifier it was saved with (Linux.machineIdentifier).
+    // Asked first whether this host can save at all, as "tart suspend" will: a
+    // suspendable Linux VM has no keyboard or pointer, which is no trade on a
+    // host that cannot suspend it.
     if suspendable {
       let config = try VMConfig.init(fromURL: vmDir.configURL)
       if !(config.platform is PlatformSuspendable) {
-        throw ValidationError("You can only suspend macOS VMs")
+        throw ValidationError("You can only suspend macOS and Linux VMs")
       }
-
+      if config.os == .linux {
+        #if arch(arm64)
+          if #unavailable(macOS 14) {
+            throw ValidationError("Suspending a Linux VM is supported on hosts starting with macOS 14 (Sonoma)")
+          }
+        #else
+          throw ValidationError("Suspending a Linux VM is supported on Apple silicon hosts only")
+        #endif
+      }
       if noTrackpad {
         throw ValidationError("--no-trackpad cannot be used with --suspendable")
       }

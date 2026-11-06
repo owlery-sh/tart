@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   release:
-    if: github.repository == 'badgery/tart'
+    if: github.repository == 'owlery-sh/tart'
     name: Release
     runs-on: macos-26
     timeout-minutes: 90

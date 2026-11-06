@@ -23,6 +23,11 @@ struct VMDirectory: Prunable {
   var stateURL: URL {
     baseURL.appendingPathComponent("state.vzvmsave")
   }
+  // machineIdentifierURL is a Linux VM's machine identifier (Linux.machineIdentifier),
+  // which a saved state is restored only under.
+  var machineIdentifierURL: URL {
+    baseURL.appendingPathComponent(Linux.machineIdentifierFile)
+  }
   var manifestURL: URL {
     baseURL.appendingPathComponent("manifest.json")
   }
@@ -181,6 +186,7 @@ struct VMDirectory: Prunable {
     try? FileManager.default.removeItem(at: manifestURL)
     try? FileManager.default.removeItem(at: overlayURL)
     try? FileManager.default.removeItem(at: stateURL)
+    try? FileManager.default.removeItem(at: machineIdentifierURL)
   }
 
   func validate(userFriendlyName: String) throws {
@@ -216,7 +222,20 @@ struct VMDirectory: Prunable {
     try FileManager.default.copyItem(at: configURL, to: to.configURL)
     try FileManager.default.copyItem(at: nvramURL, to: to.nvramURL)
     try FileManager.default.copyItem(at: diskURL, to: to.diskURL)
-    try? FileManager.default.copyItem(at: stateURL, to: to.stateURL)
+    // A Linux VM's saved state is restored only under the machine identifier it
+    // was saved with: a clone that takes the one takes the other, or neither.
+    // Without a state, a clone makes an identifier of its own at its first run. A
+    // macOS VM keeps its identifier in its config.
+    if (try? FileManager.default.copyItem(at: stateURL, to: to.stateURL)) != nil {
+      do {
+        if try VMConfig(fromURL: to.configURL).os == .linux {
+          try FileManager.default.copyItem(at: machineIdentifierURL, to: to.machineIdentifierURL)
+        }
+      } catch {
+        try? FileManager.default.removeItem(at: to.stateURL)
+        throw error
+      }
+    }
 
     // Re-generate MAC address
     if generateMAC {

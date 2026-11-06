@@ -15,6 +15,10 @@ class SoftnetControlSocket {
   // Softnet's request limit plus the newline
   static let maxLineBytes = 1024 * 1024 + 1
 
+  // Clients waiting while another is served. A queue of one refused a client
+  // that came while one that had already gone was still waiting to be accepted.
+  static let backlog: Int32 = 16
+
   let socketURL: URL
   private let listenFD: Int32
   private let softnetFD: Int32
@@ -69,7 +73,7 @@ class SoftnetControlSocket {
       try Self.bindSocket(listenFD, path: socketURL.relativePath)
 
       // Restrict who can connect before accepting any connections
-      guard chmod(socketURL.relativePath, 0o600) == 0, listen(listenFD, 1) == 0 else {
+      guard chmod(socketURL.relativePath, 0o600) == 0, listen(listenFD, Self.backlog) == 0 else {
         throw SoftnetError.InitializationFailed(why: "failed to listen on \(socketURL.relativePath): \(Errno(rawValue: errno))")
       }
     } catch {
