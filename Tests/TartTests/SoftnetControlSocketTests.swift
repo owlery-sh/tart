@@ -32,6 +32,22 @@ final class SoftnetControlSocketTests: XCTestCase {
     }
   }
 
+  func testClientsThatComeWhileAnotherIsServedWaitTheirTurn() throws {
+    try withControlSocket { socketURL in
+      let first = try connect(socketURL)
+      XCTAssertEqual(try exchange(first, "{\"id\":6}\n"), "reply {\"id\":6}\n")
+
+      // Served one at a time: these wait while the first is still connected
+      let waiting = try (0..<3).map { _ in try connect(socketURL) }
+      close(first)
+
+      for (i, client) in waiting.enumerated() {
+        XCTAssertEqual(try exchange(client, "{\"id\":\(7 + i)}\n"), "reply {\"id\":\(7 + i)}\n")
+        close(client)
+      }
+    }
+  }
+
   func testResponseForDisconnectedClientIsNotSeenByTheNext() throws {
     try withControlSocket { socketURL in
       let abandoned = try connect(socketURL)
