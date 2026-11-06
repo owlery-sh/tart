@@ -23,6 +23,11 @@ struct VMDirectory: Prunable {
   var stateURL: URL {
     baseURL.appendingPathComponent("state.vzvmsave")
   }
+  // machineIdentifierURL is a Linux VM's machine identifier (Linux.machineIdentifier),
+  // which a saved state is restored only under.
+  var machineIdentifierURL: URL {
+    baseURL.appendingPathComponent(Linux.machineIdentifierFile)
+  }
   var manifestURL: URL {
     baseURL.appendingPathComponent("manifest.json")
   }
@@ -216,7 +221,12 @@ struct VMDirectory: Prunable {
     try FileManager.default.copyItem(at: configURL, to: to.configURL)
     try FileManager.default.copyItem(at: nvramURL, to: to.nvramURL)
     try FileManager.default.copyItem(at: diskURL, to: to.diskURL)
-    try? FileManager.default.copyItem(at: stateURL, to: to.stateURL)
+    // A saved state is restored only under the machine identifier it was saved
+    // with: a clone that takes the one takes the other. Without a state, a clone
+    // makes an identifier of its own at its first run.
+    if (try? FileManager.default.copyItem(at: stateURL, to: to.stateURL)) != nil {
+      try? FileManager.default.copyItem(at: machineIdentifierURL, to: to.machineIdentifierURL)
+    }
 
     // Re-generate MAC address
     if generateMAC {

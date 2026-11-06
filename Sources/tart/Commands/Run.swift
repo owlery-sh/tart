@@ -392,12 +392,10 @@ struct Run: AsyncParsableCommand {
       suspendable = true
     }
 
+    // A Linux VM is suspendable too: Virtualization.framework saves its state as
+    // it does a macOS VM's (validateSaveRestoreSupport is asked at the suspend),
+    // given the machine identifier it was saved with (Linux.machineIdentifier).
     if suspendable {
-      let config = try VMConfig.init(fromURL: vmDir.configURL)
-      if !(config.platform is PlatformSuspendable) {
-        throw ValidationError("You can only suspend macOS VMs")
-      }
-
       if noTrackpad {
         throw ValidationError("--no-trackpad cannot be used with --suspendable")
       }
