@@ -370,12 +370,6 @@ struct Run: AsyncParsableCommand {
       throw ValidationError("--net-bridged, --net-softnet and --net-host are mutually exclusive")
     }
 
-    // Refused now rather than once the VM is being started
-    if netHost && !VMNetworking.available() {
-      throw ValidationError("--net-host needs the \(VMNetworking.entitlement) entitlement, which this build of Tart "
-        + "is not signed with, or running as root")
-    }
-
     if graphics && noGraphics {
       throw ValidationError("--graphics and --no-graphics are mutually exclusive")
     }

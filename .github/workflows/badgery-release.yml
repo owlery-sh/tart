@@ -2,7 +2,7 @@ name: Badgery Release
 
 # Badgery's builds of this fork: arm64 only, signed with Badgery's Developer ID
 # and without com.apple.vm.networking, which needs Cirrus Labs' provisioning
-# profile (so --net-bridged is unavailable, and --net-host is too unless run as root)
+# profile (so --net-bridged is unavailable)
 #
 # A tag builds, signs and publishes a release. A push to the default branch only
 # builds, to save the cache: a tag's run can restore caches from the default
@@ -132,7 +132,7 @@ jobs:
           gh release create "$VERSION" tart.tar.gz SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "$VERSION" \
-            --notes "Badgery build of Tart $VERSION: arm64, signed by Badgery, adds \`tart run --vsock-socket\`. Without com.apple.vm.networking, so --net-bridged and --net-host are unavailable (--net-host works only as root)."
+            --notes "Badgery build of Tart $VERSION: arm64, signed by Badgery, adds \`tart run --vsock-socket\`. Without com.apple.vm.networking, so --net-bridged is unavailable."
       - name: Remove signing material
         if: always() && env.RELEASE == 'true'
         run: |

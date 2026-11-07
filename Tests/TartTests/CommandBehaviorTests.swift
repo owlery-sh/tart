@@ -140,23 +140,18 @@ final class CommandBehaviorTests: XCTestCase {
     }
   }
 
-  func testNetHostIsRefusedWithoutVMNetworking() throws {
-    XCTAssertFalse(VMNetworking.available(entitled: false, root: false))
-    XCTAssertTrue(VMNetworking.available(entitled: true, root: false))
-    XCTAssertTrue(VMNetworking.available(entitled: false, root: true))
-
-    // Unsigned and not root, as a build of this fork run by a user is
-    try XCTSkipIf(VMNetworking.available(), "this test process can create vmnet networks")
-
+  // Whether vmnet lets this process create the network is left to vmnet, when the
+  // VM starts: Apple documents com.apple.vm.networking as required of sandboxed
+  // processes, and Tart is not one
+  func testNetHostIsNotRefusedBeforeTheVMStarts() throws {
     try withTemporaryTartHome {
       let vmDir = try VMStorageLocal().create("net-host")
       try config().save(toURL: vmDir.configURL)
       XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.nvramURL.path, contents: Data()))
       XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.diskURL.path, contents: Data()))
 
-      XCTAssertThrowsError(try Run.parseAsRoot(["net-host", "--net-host"])) { error in
-        XCTAssertTrue(Run.message(for: error).contains(VMNetworking.entitlement), Run.message(for: error))
-      }
+      let command = try Run.parseAsRoot(["net-host", "--net-host"]) as! Run
+      XCTAssertTrue(command.netHost)
     }
   }
 
