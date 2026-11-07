@@ -62,32 +62,49 @@ final class SoftnetControlSocketTests: XCTestCase {
     }
   }
 
-  func testOversizedRequestSentInChunksIsAnsweredAndTheClientIsStillServed() throws {
+  func testOversizedRequestSentInChunksIsAnsweredAndItsClientClosed() throws {
     try withControlSocket { socketURL in
       let client = try connect(socketURL)
       defer { close(client) }
 
-      // Past the limit with no newline yet, so the answer comes before the request ends
+      // Exactly one byte past the limit with no newline, then nothing more: the
+      // answer must not wait for a newline that a stalled client never sends
       let chunk = String(repeating: "x", count: 64 * 1024)
-      for _ in 0...(SoftnetControlSocket.maxLineBytes / chunk.utf8.count) {
+      for _ in 0..<(SoftnetControlSocket.maxLineBytes / chunk.utf8.count) {
         try send(client, chunk)
       }
-      XCTAssertEqual(try readLine(client), oversizedRequestResponse)
+      try send(client, String(repeating: "x", count: SoftnetControlSocket.maxLineBytes % chunk.utf8.count))
 
-      // The rest of that request is skipped, and the next is answered
-      try send(client, chunk + "\n")
-      XCTAssertEqual(try exchange(client, "{\"id\":10}\n"), "reply {\"id\":10}\n")
+      XCTAssertEqual(try readLine(client), oversizedRequestResponse)
+      guard isClosed(client) else {
+        return XCTFail("the relay kept reading a client past the limit")
+      }
+
+      // Nobody is left waiting behind it
+      let next = try connect(socketURL)
+      defer { close(next) }
+      XCTAssertEqual(try exchange(next, "{\"id\":10}\n"), "reply {\"id\":10}\n")
     }
   }
 
-  func testOversizedRequestEndingInNewlineIsAnsweredAndTheClientIsStillServed() throws {
+  func testOversizedRequestWhoseNewlineCrossesTheLimitIsNotRelayed() throws {
     try withControlSocket { socketURL in
       let client = try connect(socketURL)
       defer { close(client) }
 
-      try send(client, String(repeating: "x", count: SoftnetControlSocket.maxLineBytes) + "\n")
+      // Up to the limit, then the byte past it and the newline in one write, so the
+      // newline arrives in the read that crosses the limit
+      try send(client, String(repeating: "x", count: SoftnetControlSocket.maxLineBytes - 1))
+      try send(client, "x\n")
+
       XCTAssertEqual(try readLine(client), oversizedRequestResponse)
-      XCTAssertEqual(try exchange(client, "{\"id\":11}\n"), "reply {\"id\":11}\n")
+      guard isClosed(client) else {
+        return XCTFail("the relay kept reading a client past the limit")
+      }
+
+      let next = try connect(socketURL)
+      defer { close(next) }
+      XCTAssertEqual(try exchange(next, "{\"id\":11}\n"), "reply {\"id\":11}\n")
     }
   }
 
@@ -237,5 +254,15 @@ final class SoftnetControlSocketTests: XCTestCase {
     }
 
     return String(decoding: response, as: UTF8.self)
+  }
+
+  // Whether the relay has closed the connection, with nothing more to read
+  private func isClosed(_ fd: Int32) -> Bool {
+    // Bounds the wait only if the relay keeps the connection open
+    var timeout = timeval(tv_sec: 10, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+    var byte: UInt8 = 0
+    return read(fd, &byte, 1) == 0
   }
 }

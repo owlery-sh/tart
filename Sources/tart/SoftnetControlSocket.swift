@@ -19,8 +19,7 @@ class SoftnetControlSocket {
   // that came while one that had already gone was still waiting to be accepted.
   static let backlog: Int32 = 16
 
-  // What Softnet answers a request longer than its limit with. It then discards the
-  // request through its newline and carries on, and so does the relay.
+  // What Softnet answers a request longer than its limit with
   static let oversizedRequestResponse = Data(
     "{\"error\":{\"code\":-32700,\"message\":\"request exceeds the maximum frame size\"},\"id\":null,\"jsonrpc\":\"2.0\"}\n".utf8
   )
@@ -152,11 +151,10 @@ class SoftnetControlSocket {
       case .line(let line):
         request = line
       case .tooLong:
-        // Answered as Softnet would, without passing it on, and the client is still served
-        guard Self.writeAll(clientFD, Self.oversizedRequestResponse) else {
-          return true
-        }
-        continue
+        // Answered as Softnet would, without passing it on. The client is then closed
+        // rather than read to its newline, which might never come while other clients wait.
+        _ = Self.writeAll(clientFD, Self.oversizedRequestResponse)
+        return true
       case .end:
         return true
       }
@@ -235,7 +233,8 @@ private class LineReader {
   enum Result {
     /// A line including its newline
     case line(Data)
-    /// A line longer than SoftnetControlSocket.maxLineBytes, which is skipped through its newline
+    /// A line longer than SoftnetControlSocket.maxLineBytes, after which the descriptor
+    /// is not read any further
     case tooLong
     /// End of file or an error
     case end
@@ -243,7 +242,6 @@ private class LineReader {
 
   private let fd: Int32
   private var buffer = Data()
-  private var discarding = false
 
   init(_ fd: Int32) {
     self.fd = fd
@@ -254,27 +252,19 @@ private class LineReader {
 
     while true {
       if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-        let line = buffer[buffer.startIndex...newline]
-        buffer = Data(buffer[buffer.index(after: newline)...])
-
-        if discarding {
-          discarding = false
-          continue
-        }
-        if line.count > SoftnetControlSocket.maxLineBytes {
+        // Its newline came in the read that took it past the limit
+        if newline - buffer.startIndex + 1 > SoftnetControlSocket.maxLineBytes {
           return .tooLong
         }
+
+        let line = buffer[buffer.startIndex...newline]
+        buffer = Data(buffer[buffer.index(after: newline)...])
 
         return .line(Data(line))
       }
 
-      if discarding {
-        buffer.removeAll()
-      } else if buffer.count >= SoftnetControlSocket.maxLineBytes {
-        // Reported now rather than at the newline, which may never come
-        buffer.removeAll()
-        discarding = true
-
+      // Reported now rather than at the newline, which may never come
+      if buffer.count >= SoftnetControlSocket.maxLineBytes {
         return .tooLong
       }
 
