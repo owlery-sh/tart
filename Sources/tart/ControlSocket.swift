@@ -7,6 +7,9 @@ import os.log
 import NIO
 import NIOPosix
 
+// Avoid Tart's Darwin type shadowing the system function
+private let systemBind = bind
+
 @available(macOS 14, *)
 class ControlSocket {
   typealias ServerChannel = NIOAsyncChannel<NIOAsyncChannel<ByteBuffer, ByteBuffer>, Never>
@@ -36,6 +39,9 @@ class ControlSocket {
     }
 
     do {
+      let socket = try Self.bindRestricted(controlSocketURL.relativePath, permissions: permissions)
+
+      // NIO takes the descriptor over and only then starts listening
       self.serverChannel = try await ServerBootstrap(group: eventLoopGroup)
         .serverChannelInitializer { channel in
           channel.pipeline.addHandler(
@@ -43,7 +49,7 @@ class ControlSocket {
             name: "ControlSocketAcceptErrorHandler"
           )
         }
-        .bind(unixDomainSocketPath: controlSocketURL.relativePath) { childChannel in
+        .bind(socket) { childChannel in
           childChannel.eventLoop.makeCompletedFuture {
             return try NIOAsyncChannel<ByteBuffer, ByteBuffer>(
               wrappingChannelSynchronously: childChannel
@@ -54,15 +60,35 @@ class ControlSocket {
       try? await eventLoopGroup.shutdownGracefully()
       throw error
     }
+  }
 
-    // Restrict who can connect before run() starts accepting connections
-    if let permissions = permissions,
-       chmod(controlSocketURL.path(percentEncoded: false), permissions) != 0 {
+  /// Creates a socket bound to path that is not yet listening, with permissions applied.
+  ///
+  /// Connecting to a socket that is not listening is refused, so restricting it before
+  /// listening leaves no moment in which another user could connect.
+  static func bindRestricted(_ path: String, permissions: mode_t?) throws -> CInt {
+    let address = try SocketAddress(unixDomainSocketPath: path)
+
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else {
+      throw Errno(rawValue: errno)
+    }
+
+    guard fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
+          address.withSockAddr({ systemBind(fd, $0, socklen_t($1)) }) == 0 else {
       let error = Errno(rawValue: errno)
-      try? await serverChannel.channel.close()
-      try? await eventLoopGroup.shutdownGracefully()
+      close(fd)
       throw error
     }
+
+    if let permissions = permissions, chmod(path, permissions) != 0 {
+      let error = Errno(rawValue: errno)
+      close(fd)
+      unlink(path)
+      throw error
+    }
+
+    return fd
   }
 
   func run() async throws {
