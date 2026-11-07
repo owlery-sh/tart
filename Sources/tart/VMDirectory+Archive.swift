@@ -107,6 +107,8 @@ extension VMDirectory {
     if isStackedVM {
       try restoreStackedArchive()
     }
+
+    removeMachineIdentifierWithoutState()
   }
 
   /// Builds a self-contained staging directory for a stacked archive, if this

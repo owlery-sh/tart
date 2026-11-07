@@ -247,6 +247,16 @@ struct VMDirectory: Prunable {
     try VMConfig(fromURL: configURL).macAddress.string
   }
 
+  // removeMachineIdentifierWithoutState drops a Linux VM's machine identifier
+  // unless a saved state needs it to be restored. An import keeps the archive's
+  // identifier only for that, as a clone keeps its source's: otherwise two
+  // imports of one archive would share one, so the VM makes its own at first run.
+  func removeMachineIdentifierWithoutState() {
+    if !FileManager.default.fileExists(atPath: stateURL.path) {
+      try? FileManager.default.removeItem(at: machineIdentifierURL)
+    }
+  }
+
   func regenerateMACAddress() throws {
     var vmConfig = try VMConfig(fromURL: configURL)
 

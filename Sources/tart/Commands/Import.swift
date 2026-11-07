@@ -45,6 +45,9 @@ struct Import: AsyncParsableCommand {
       // Re-generate the VM's MAC address importing it will result in address collision
       if try localStorage.hasVMsWithMACAddress(macAddress: tmpVMDir.macAddress()) {
         try tmpVMDir.regenerateMACAddress()
+        // That dropped the saved state, and with it the reason to keep the
+        // archive's machine identifier.
+        tmpVMDir.removeMachineIdentifierWithoutState()
       }
 
       try localStorage.move(name, from: tmpVMDir)
