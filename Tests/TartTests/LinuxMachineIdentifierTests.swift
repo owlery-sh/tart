@@ -126,10 +126,35 @@ final class LinuxMachineIdentifierTests: XCTestCase {
 
     // What import does on a MAC address collision.
     try imported.regenerateMACAddress()
-    imported.removeMachineIdentifierWithoutState()
 
     XCTAssertFalse(FileManager.default.fileExists(atPath: imported.stateURL.path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: imported.machineIdentifierURL.path))
+  }
+
+  func testACloneOfASavedLinuxVMWithANewMACLosesStateAndIdentifier() throws {
+    let source = try linuxVM()
+    let id = try Linux.machineIdentifier(nvramURL: source.nvramURL)
+    try touch(source.stateURL)
+    let clone = try temporaryVMDirectory()
+
+    try source.clone(to: clone, generateMAC: true)
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: clone.stateURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: clone.machineIdentifierURL.path))
+    XCTAssertNotEqual(try Linux.machineIdentifier(nvramURL: clone.nvramURL).dataRepresentation, id.dataRepresentation)
+  }
+
+  // What run does to a VM whose MAC address collides with a running one's.
+  func testANewMACForASavedLinuxVMLosesStateAndIdentifier() throws {
+    let vmDir = try linuxVM()
+    let id = try Linux.machineIdentifier(nvramURL: vmDir.nvramURL)
+    try touch(vmDir.stateURL)
+
+    try vmDir.regenerateMACAddress()
+
+    XCTAssertFalse(FileManager.default.fileExists(atPath: vmDir.stateURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: vmDir.machineIdentifierURL.path))
+    XCTAssertNotEqual(try Linux.machineIdentifier(nvramURL: vmDir.nvramURL).dataRepresentation, id.dataRepresentation)
   }
 
   private func exported(_ vmDir: VMDirectory) throws -> URL {

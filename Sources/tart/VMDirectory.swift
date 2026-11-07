@@ -261,8 +261,11 @@ struct VMDirectory: Prunable {
     var vmConfig = try VMConfig(fromURL: configURL)
 
     vmConfig.macAddress = VZMACAddress.randomLocallyAdministered()
-    // cleanup state if any
+    // cleanup state if any, and the Linux machine identifier kept only to
+    // restore it: a clone, an import or a run that collided is no longer the
+    // VM that was saved
     try? FileManager.default.removeItem(at: stateURL)
+    removeMachineIdentifierWithoutState()
 
     try vmConfig.save(toURL: configURL)
   }
