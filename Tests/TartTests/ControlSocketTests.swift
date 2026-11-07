@@ -5,6 +5,7 @@ import XCTest
 
 // Avoid NSObject.bind and Tart's Darwin type shadowing the system function.
 private let bindTestSocket = bind
+private let connectTestSocket = connect
 
 @available(macOS 14, *)
 final class ControlSocketTests: XCTestCase {
@@ -48,6 +49,33 @@ final class ControlSocketTests: XCTestCase {
 
     try await controlSocket.serverChannel.executeThenClose { _ in }
     try await controlSocket.eventLoopGroup.shutdownGracefully()
+  }
+
+  func testSocketIsRestrictedBeforeItListens() throws {
+    let temporaryDirectory = try makeTemporaryDirectory()
+    let originalDirectory = FileManager.default.currentDirectoryPath
+    defer {
+      FileManager.default.changeCurrentDirectoryPath(originalDirectory)
+      try? FileManager.default.removeItem(at: temporaryDirectory)
+    }
+    XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(temporaryDirectory.path))
+
+    let descriptor = try ControlSocket.bindRestricted("vsock-10789.sock", permissions: 0o600)
+    defer { close(descriptor) }
+
+    let socketPath = temporaryDirectory.appendingPathComponent("vsock-10789.sock").path
+    let attributes = try FileManager.default.attributesOfItem(atPath: socketPath)
+    XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+
+    // Not listening yet, so a connection is refused rather than queued for accepting
+    let address = try SocketAddress(unixDomainSocketPath: "vsock-10789.sock")
+    let client = socket(AF_UNIX, SOCK_STREAM, 0)
+    XCTAssertGreaterThanOrEqual(client, 0)
+    defer { close(client) }
+    let result = address.withSockAddr { connectTestSocket(client, $0, socklen_t($1)) }
+    let connectError = errno
+    XCTAssertEqual(result, -1)
+    XCTAssertEqual(connectError, ECONNREFUSED)
   }
 
   func testAcceptErrorsRetryReadingAndForwardOtherErrors() async throws {

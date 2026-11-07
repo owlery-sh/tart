@@ -140,6 +140,21 @@ final class CommandBehaviorTests: XCTestCase {
     }
   }
 
+  // Whether vmnet lets this process create the network is left to vmnet, when the
+  // VM starts: Apple documents com.apple.vm.networking as required of sandboxed
+  // processes, and Tart is not one
+  func testNetHostIsNotRefusedBeforeTheVMStarts() throws {
+    try withTemporaryTartHome {
+      let vmDir = try VMStorageLocal().create("net-host")
+      try config().save(toURL: vmDir.configURL)
+      XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.nvramURL.path, contents: Data()))
+      XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.diskURL.path, contents: Data()))
+
+      let command = try Run.parseAsRoot(["net-host", "--net-host"]) as! Run
+      XCTAssertTrue(command.netHost)
+    }
+  }
+
   func testStandaloneDeleteDoesNotInitializeContentStore() throws {
     try withTemporaryTartHome {
       let vmDir = try VMStorageLocal().create("standalone")

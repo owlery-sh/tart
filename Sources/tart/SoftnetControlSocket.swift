@@ -19,9 +19,16 @@ class SoftnetControlSocket {
   // that came while one that had already gone was still waiting to be accepted.
   static let backlog: Int32 = 16
 
+  // What Softnet answers a request longer than its limit with
+  static let oversizedRequestResponse = Data(
+    "{\"error\":{\"code\":-32700,\"message\":\"request exceeds the maximum frame size\"},\"id\":null,\"jsonrpc\":\"2.0\"}\n".utf8
+  )
+
   let socketURL: URL
   private let listenFD: Int32
   private let softnetFD: Int32
+  private let acceptClient: (Int32) -> Int32
+  private let onError: (Error) -> Void
 
   /// Starts serving and returns the descriptor to pass to Softnet as its control channel.
   static func start(_ socketURL: URL) throws -> Int32 {
@@ -47,9 +54,16 @@ class SoftnetControlSocket {
     return fds[0]
   }
 
-  init(_ socketURL: URL, softnetFD: Int32) throws {
+  init(
+    _ socketURL: URL,
+    softnetFD: Int32,
+    acceptClient: @escaping (Int32) -> Int32 = { accept($0, nil, nil) },
+    onError: @escaping (Error) -> Void = { fputs("Failed to run Softnet control socket: \($0)\n", stderr) }
+  ) throws {
     self.socketURL = socketURL
     self.softnetFD = softnetFD
+    self.acceptClient = acceptClient
+    self.onError = onError
     try Self.disableSIGPIPE(softnetFD)
 
     // Remove the socket file from previous "tart run" invocations, if any,
@@ -82,33 +96,44 @@ class SoftnetControlSocket {
     }
   }
 
-  private func serve() {
+  func serve() {
     let thread = Thread {
-      let softnet = LineReader(self.softnetFD)
-
-      while true {
-        let clientFD = accept(self.listenFD, nil, nil)
-        if clientFD < 0 {
-          if errno == EINTR || errno == ECONNABORTED {
-            continue
-          }
-
-          return
-        }
-
-        let softnetAlive = self.relay(clientFD, softnet)
-        close(clientFD)
-
-        if !softnetAlive {
-          close(self.listenFD)
-          try? FileManager.default.removeItem(at: self.socketURL)
-
-          return
-        }
+      if let error = self.serveClients() {
+        self.onError(error)
       }
     }
     thread.name = "softnet-control-socket"
     thread.start()
+  }
+
+  /// Serves clients until Softnet goes away or accepting fails, which is returned.
+  /// Either way the socket is closed and removed, so it is never left behind unserved.
+  private func serveClients() -> Error? {
+    defer {
+      close(listenFD)
+      try? FileManager.default.removeItem(at: socketURL)
+    }
+
+    let softnet = LineReader(softnetFD)
+
+    while true {
+      let clientFD = acceptClient(listenFD)
+      if clientFD < 0 {
+        let error = errno
+        if error == EINTR || error == ECONNABORTED {
+          continue
+        }
+
+        return SoftnetError.RuntimeFailed(why: "accept() failed on \(socketURL.relativePath): \(Errno(rawValue: error))")
+      }
+
+      let softnetAlive = relay(clientFD, softnet)
+      close(clientFD)
+
+      if !softnetAlive {
+        return nil
+      }
+    }
   }
 
   /// Relays the client's requests until it disconnects. Returns false once Softnet has gone away.
@@ -120,12 +145,25 @@ class SoftnetControlSocket {
 
     let client = LineReader(clientFD)
 
-    while let request = client.next() {
+    while true {
+      let request: Data
+      switch client.next() {
+      case .line(let line):
+        request = line
+      case .tooLong:
+        // Answered as Softnet would, without passing it on. The client is then closed
+        // rather than read to its newline, which might never come while other clients wait.
+        _ = Self.writeAll(clientFD, Self.oversizedRequestResponse)
+        return true
+      case .end:
+        return true
+      }
+
       guard Self.writeAll(softnetFD, request) else {
         return false
       }
 
-      guard let response = softnet.next() else {
+      guard case .line(let response) = softnet.next() else {
         return false
       }
 
@@ -134,8 +172,6 @@ class SoftnetControlSocket {
         return true
       }
     }
-
-    return true
   }
 
   private static func bindSocket(_ fd: Int32, path: String) throws {
@@ -194,6 +230,16 @@ class SoftnetControlSocket {
 
 /// Reads newline-terminated lines from a descriptor.
 private class LineReader {
+  enum Result {
+    /// A line including its newline
+    case line(Data)
+    /// A line longer than SoftnetControlSocket.maxLineBytes, after which the descriptor
+    /// is not read any further
+    case tooLong
+    /// End of file or an error
+    case end
+  }
+
   private let fd: Int32
   private var buffer = Data()
 
@@ -201,21 +247,25 @@ private class LineReader {
     self.fd = fd
   }
 
-  /// Returns the next line including its newline, or nil on end of file, an error,
-  /// or a line longer than SoftnetControlSocket.maxLineBytes.
-  func next() -> Data? {
+  func next() -> Result {
     var chunk = [UInt8](repeating: 0, count: 64 * 1024)
 
     while true {
       if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+        // Its newline came in the read that took it past the limit
+        if newline - buffer.startIndex + 1 > SoftnetControlSocket.maxLineBytes {
+          return .tooLong
+        }
+
         let line = buffer[buffer.startIndex...newline]
         buffer = Data(buffer[buffer.index(after: newline)...])
 
-        return Data(line)
+        return .line(Data(line))
       }
 
+      // Reported now rather than at the newline, which may never come
       if buffer.count >= SoftnetControlSocket.maxLineBytes {
-        return nil
+        return .tooLong
       }
 
       let count = read(fd, &chunk, chunk.count)
@@ -223,7 +273,7 @@ private class LineReader {
         continue
       }
       if count <= 0 {
-        return nil
+        return .end
       }
 
       buffer.append(contentsOf: chunk[0..<count])
