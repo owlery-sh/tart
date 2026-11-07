@@ -70,7 +70,7 @@ extension VMDirectory {
       try restoreStackedArchive()
     }
 
-    removeMachineIdentifierWithoutState()
+    try removeMachineIdentifierWithoutState()
   }
 
   // extractArchive is on its own so that its streams are closed when it

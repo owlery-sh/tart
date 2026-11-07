@@ -157,6 +157,59 @@ final class LinuxMachineIdentifierTests: XCTestCase {
     XCTAssertNotEqual(try Linux.machineIdentifier(nvramURL: vmDir.nvramURL).dataRepresentation, id.dataRepresentation)
   }
 
+  func testANewMACThatCannotBeSavedKeepsStateAndIdentifier() throws {
+    let vmDir = try linuxVM()
+    let id = try Linux.machineIdentifier(nvramURL: vmDir.nvramURL)
+    try touch(vmDir.stateURL)
+    let mac = try vmDir.macAddress()
+    try readOnly(vmDir.configURL)
+
+    XCTAssertThrowsError(try vmDir.regenerateMACAddress())
+
+    XCTAssertEqual(try vmDir.macAddress(), mac)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: vmDir.stateURL.path))
+    XCTAssertEqual(try Data(contentsOf: vmDir.machineIdentifierURL), id.dataRepresentation)
+  }
+
+  func testAnIdentifierThatCannotBeRemovedFailsTheImport() throws {
+    let source = try linuxVM()
+    try undeletable(source.machineIdentifierURL)
+    let imported = try temporaryVMDirectory()
+    let archive = try exported(source)
+    addTeardownBlock { try? self.deletable(imported.machineIdentifierURL) }
+
+    XCTAssertThrowsError(try imported.importFromArchive(path: archive.path))
+  }
+
+  func testAnIdentifierThatCannotBeRemovedFailsANewMAC() throws {
+    let vmDir = try linuxVM()
+    try undeletable(vmDir.machineIdentifierURL)
+
+    XCTAssertThrowsError(try vmDir.regenerateMACAddress())
+  }
+
+  private func readOnly(_ url: URL) throws {
+    try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+    addTeardownBlock {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+    }
+  }
+
+  // undeletable puts a directory at url that cannot be removed: a removal has
+  // to empty it, and the directory inside it is not writable.
+  private func undeletable(_ url: URL) throws {
+    let locked = url.appendingPathComponent("locked")
+    try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+    try touch(locked.appendingPathComponent("file"))
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+    addTeardownBlock { try? self.deletable(url) }
+  }
+
+  private func deletable(_ url: URL) throws {
+    try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                          ofItemAtPath: url.appendingPathComponent("locked").path)
+  }
+
   private func exported(_ vmDir: VMDirectory) throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".tvm")
     addTeardownBlock {
