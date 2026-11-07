@@ -1,7 +1,26 @@
 import Foundation
+import Security
 import Semaphore
 import Virtualization
 import vmnet
+
+enum VMNetworking {
+  static let entitlement = "com.apple.vm.networking"
+
+  /// Whether this process may create a vmnet network: as root, or signed with
+  /// com.apple.vm.networking, which builds of this fork are not
+  static func available(entitled: Bool = hasEntitlement(), root: Bool = geteuid() == 0) -> Bool {
+    entitled || root
+  }
+
+  static func hasEntitlement() -> Bool {
+    guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else {
+      return false
+    }
+
+    return SecTaskCopyValueForEntitlement(task, entitlement as CFString, nil) as? Bool == true
+  }
+}
 
 @available(macOS 26, *)
 class NetworkHost: Network {
